@@ -24,6 +24,16 @@ import numpy as np
 import scipy.io as sio
 from scipy import signal
 
+try:
+    import mne
+    from mne.preprocessing import ICA
+
+    _HAS_MNE = True
+except Exception:  # pragma: no cover
+    mne = None
+    ICA = None
+    _HAS_MNE = False
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,6 +41,240 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
+
+# ===== FACED-like minimal preprocessing =====
+# Notes:
+# - This is intentionally minimal and robust: bandpass + MAD bad channel interpolation + ICA(EOG proxy).
+# - We run it once per *continuous recording* (e.g., EEG_data_pos full length), then slice trials/windows.
+EEG_MINPREP_DEFAULTS = {
+    "enabled": True,
+    "notch_freqs": [50.0],  # China mains
+    "bp_l": 0.05,
+    "bp_h": 47.0,
+    "filter_method": "fir",  # MNE default is zero-phase FIR when phase="zero"
+    "filter_phase": "zero",
+    "mad_k": 3.0,
+    "bad_ratio": 0.30,  # >30% outliers => bad channel
+    "eps": 1e-12,
+    "ica_n_components": 0.99,  # keep 99% variance
+    "ica_method": "fastica",
+    "ica_random_state": 97,
+    "ica_fit_l": 1.0,  # stabilize ICA with higher HP
+    "ica_fit_h": 47.0,
+    "ica_eog_threshold": 3.0,  # MNE default
+}
+
+# Channel order (given 30 channels)
+CHS_ORIG = [
+    "FP1",
+    "FP2",
+    "F7",
+    "F3",
+    "FZ",
+    "F4",
+    "F8",
+    "FT7",
+    "FC3",
+    "FCZ",
+    "FC4",
+    "FT8",
+    "T3",
+    "C3",
+    "CZ",
+    "C4",
+    "T4",
+    "TP7",
+    "CP3",
+    "CPZ",
+    "CP4",
+    "TP8",
+    "T5",
+    "P3",
+    "PZ",
+    "P4",
+    "T6",
+    "O1",
+    "OZ",
+    "O2",
+]
+
+# old -> modern 10-20 names (for montage)
+RENAME_FOR_MONTAGE = {
+    "FP1": "Fp1",
+    "FP2": "Fp2",
+    "FZ": "Fz",
+    "FCZ": "FCz",
+    "CZ": "Cz",
+    "CPZ": "CPz",
+    "PZ": "Pz",
+    "OZ": "Oz",
+    "T3": "T7",
+    "T4": "T8",
+    "T5": "P7",
+    "T6": "P8",
+}
+
+
+def _to_mne_name(ch: str) -> str:
+    return RENAME_FOR_MONTAGE.get(ch, ch)
+
+
+CHS_MNE = [_to_mne_name(c) for c in CHS_ORIG]
+
+
+def _make_raw_eeg(data_samp_ch: np.ndarray, sfreq: float) -> "mne.io.Raw":
+    """
+    data_samp_ch: (n_samples, n_channels)
+    """
+    if not _HAS_MNE:
+        raise RuntimeError("MNE is not available; cannot build Raw.")
+    if data_samp_ch.ndim != 2:
+        raise ValueError(f"Expected 2D EEG array, got shape={data_samp_ch.shape}")
+    if data_samp_ch.shape[1] != len(CHS_MNE):
+        raise ValueError(f"Expected {len(CHS_MNE)} channels, got {data_samp_ch.shape[1]}")
+
+    info = mne.create_info(ch_names=CHS_MNE, sfreq=float(sfreq), ch_types=["eeg"] * len(CHS_MNE))
+    raw = mne.io.RawArray(data_samp_ch.T, info, verbose=False)  # MNE: (n_ch, n_times)
+
+    montage = mne.channels.make_standard_montage("standard_1020")
+    raw.set_montage(montage, on_missing="warn", verbose=False)
+    return raw
+
+
+def _mad_outlier_ratio(x: np.ndarray, k: float, eps: float) -> float:
+    med = np.median(x)
+    mad = np.median(np.abs(x - med)) + eps
+    out = np.abs(x - med) > (k * mad)
+    return float(out.mean())
+
+
+def detect_bads_mad_union(raw: "mne.io.Raw", seg_pts: int, n_seg: int, cfg: dict) -> list[str]:
+    """
+    Compute MAD outlier ratio per channel on each segment, mark channel bad if any segment exceeds threshold.
+    """
+    data = raw.get_data(picks="eeg")  # (n_ch, n_times)
+    bads: set[str] = set()
+    for si in range(int(n_seg)):
+        s = int(si) * int(seg_pts)
+        e = s + int(seg_pts)
+        if e > data.shape[1]:
+            break
+        seg = data[:, s:e]
+        for ci, ch in enumerate(raw.ch_names):
+            ratio = _mad_outlier_ratio(seg[ci], k=float(cfg["mad_k"]), eps=float(cfg["eps"]))
+            if ratio > float(cfg["bad_ratio"]):
+                bads.add(ch)
+    return sorted(bads)
+
+
+def add_eog_proxy_channel(
+    raw: "mne.io.Raw", fp1: str = "Fp1", fp2: str = "Fp2", eog_name: str = "EOG"
+) -> "mne.io.Raw":
+    """
+    Add an EOG proxy channel as mean(Fp1,Fp2), type='eog', for ICA.find_bads_eog.
+    """
+    picks = []
+    if fp1 in raw.ch_names:
+        picks.append(fp1)
+    if fp2 in raw.ch_names:
+        picks.append(fp2)
+    if len(picks) == 0:
+        raise RuntimeError("Cannot build EOG proxy: neither Fp1 nor Fp2 is present.")
+
+    eeg = raw.get_data(picks=picks)  # (len(picks), n_times)
+    eog = np.mean(eeg, axis=0, keepdims=True)  # (1, n_times)
+
+    eog_info = mne.create_info([eog_name], sfreq=float(raw.info["sfreq"]), ch_types=["eog"])
+    raw_eog = mne.io.RawArray(eog, eog_info, verbose=False)
+    raw2 = raw.copy()
+    raw2.add_channels([raw_eog], force_update_info=True)
+    return raw2
+
+
+def run_ica_eog(raw: "mne.io.Raw", cfg: dict) -> "mne.io.Raw":
+    """
+    Fit ICA on a filtered copy (1-47 Hz) and apply to current raw (typically already 0.05-47 Hz).
+    """
+    raw_w_eog = add_eog_proxy_channel(raw, fp1="Fp1", fp2="Fp2", eog_name="EOG")
+
+    raw_fit = raw_w_eog.copy().filter(
+        l_freq=float(cfg["ica_fit_l"]),
+        h_freq=float(cfg["ica_fit_h"]),
+        method=str(cfg["filter_method"]),
+        phase=str(cfg["filter_phase"]),
+        picks="eeg",
+        verbose=False,
+    )
+
+    ica = ICA(
+        n_components=cfg["ica_n_components"],
+        method=str(cfg["ica_method"]),
+        random_state=int(cfg["ica_random_state"]),
+        max_iter="auto",
+        verbose=False,
+    )
+    ica.fit(raw_fit, picks="eeg")
+
+    eog_inds, _scores = ica.find_bads_eog(
+        raw_fit, ch_name="EOG", threshold=float(cfg["ica_eog_threshold"]), verbose=False
+    )
+    ica.exclude = eog_inds
+
+    raw_clean = raw_w_eog.copy()
+    ica.apply(raw_clean, verbose=False)
+    raw_clean.drop_channels(["EOG"])
+    return raw_clean
+
+
+def preprocess_recording(data_samp_ch: np.ndarray, fs: int, seg_pts: int, n_seg: int, cfg: dict | None = None) -> np.ndarray:
+    """
+    Minimal preprocessing on the full continuous recording.
+    Returns cleaned array with shape (n_samples, n_channels).
+    """
+    cfg = dict(EEG_MINPREP_DEFAULTS if cfg is None else cfg)
+    if not cfg.get("enabled", True):
+        return data_samp_ch.astype(np.float32, copy=False)
+
+    if not _HAS_MNE:
+        log.warning("MNE is not installed; skip minimal preprocessing (bandpass/bad-interp/ICA).")
+        return data_samp_ch.astype(np.float32, copy=False)
+
+    raw = _make_raw_eeg(data_samp_ch.astype(np.float64, copy=False), sfreq=float(fs))
+
+    if cfg.get("notch_freqs"):
+        raw.notch_filter(freqs=cfg["notch_freqs"], picks="eeg", verbose=False)
+
+    raw.filter(
+        l_freq=float(cfg["bp_l"]),
+        h_freq=float(cfg["bp_h"]),
+        method=str(cfg["filter_method"]),
+        phase=str(cfg["filter_phase"]),
+        picks="eeg",
+        verbose=False,
+    )
+
+    bads = detect_bads_mad_union(raw, seg_pts=int(seg_pts), n_seg=int(n_seg), cfg=cfg)
+    if bads:
+        log.info(
+            "   bad channels detected (MAD>%.2f & ratio>%.0f%%): %s",
+            float(cfg["mad_k"]),
+            float(cfg["bad_ratio"]) * 100.0,
+            bads,
+        )
+        raw.info["bads"] = bads
+        try:
+            raw.interpolate_bads(reset_bads=True, verbose=False)
+        except Exception as e:  # pragma: no cover
+            log.warning("   interpolate_bads failed; continue without interpolation. err=%r", e)
+            raw.info["bads"] = []
+
+    try:
+        raw = run_ica_eog(raw, cfg=cfg)
+        log.info("   ICA(EOG) applied.")
+    except Exception as e:  # pragma: no cover
+        log.warning("   ICA failed; continue with filter + bads only. err=%r", e)
+
+    return raw.get_data(picks="eeg").T.astype(np.float32)
 
 
 def parse_args():
@@ -128,6 +372,9 @@ def iter_train_samples(mat_path: Path, group: int, args):
 
     for var_name, label in emotion_map.items():
         data = load_mat_variable(mat_path, var_name)
+        # Minimal preprocessing on the whole continuous recording first.
+        # Train mats are shaped as (train_n_seg * train_seg_pts, 30).
+        data = preprocess_recording(data, fs=args.fs, seg_pts=args.train_seg_pts, n_seg=args.train_n_seg)
         for seg_idx in range(args.train_n_seg):
             seg_start = seg_idx * args.train_seg_pts
             seg_end = seg_start + args.train_seg_pts
@@ -157,6 +404,9 @@ def iter_public_test_samples(mat_path: Path, args):
     except KeyError:
         log.warning("skip %s because test_eeg_c is missing", mat_path)
         return
+
+    # Minimal preprocessing on the whole continuous recording first.
+    data = preprocess_recording(data, fs=args.fs, seg_pts=args.test_seg_pts, n_seg=args.test_n_seg)
 
     for seg_idx in range(args.test_n_seg):
         seg_start = seg_idx * args.test_seg_pts
