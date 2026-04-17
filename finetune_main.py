@@ -13,6 +13,20 @@ from models import model_for_faced, model_for_seedv, model_for_physio, model_for
     model_for_bciciv2a, model_for_emotion
 
 
+def str2bool(v):
+    # argparse's `type=bool` is almost always wrong because bool("False") is True.
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return True
+    s = str(v).strip().lower()
+    if s in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if s in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {v!r}")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Big model downstream')
     parser.add_argument('--seed', type=int, default=3407, help='random seed (default: 0)')
@@ -45,11 +59,11 @@ def main():
 
     parser.add_argument('--num_workers', type=int, default=16, help='num_workers')
     parser.add_argument('--label_smoothing', type=float, default=0.1, help='label_smoothing')
-    parser.add_argument('--multi_lr', type=bool, default=True,
+    parser.add_argument('--multi_lr', type=str2bool, default=True,
                         help='multi_lr')  # set different learning rates for different modules
-    parser.add_argument('--frozen', type=bool,
+    parser.add_argument('--frozen', type=str2bool,
                         default=False, help='frozen')
-    parser.add_argument('--use_pretrained_weights', type=bool,
+    parser.add_argument('--use_pretrained_weights', type=str2bool,
                         default=True, help='use_pretrained_weights')
     parser.add_argument('--foundation_dir', type=str,
                         default='pretrained_weights/pretrained_weights.pth',

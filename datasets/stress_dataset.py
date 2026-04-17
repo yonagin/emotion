@@ -8,13 +8,21 @@ import lmdb
 import pickle
 
 class CustomDataset(Dataset):
+    _env_cache = {}
+
     def __init__(
             self,
             data_dir,
             mode='train',
     ):
         super(CustomDataset, self).__init__()
-        self.db = lmdb.open(data_dir, readonly=True, lock=False, readahead=True, meminit=False)
+        # Avoid opening the same LMDB environment multiple times in one process
+        # (train/val/test datasets share the same `data_dir`).
+        if data_dir not in self._env_cache:
+            self._env_cache[data_dir] = lmdb.open(
+                data_dir, readonly=True, lock=False, readahead=True, meminit=False
+            )
+        self.db = self._env_cache[data_dir]
         with self.db.begin(write=False) as txn:
             self.keys = pickle.loads(txn.get('__keys__'.encode()))[mode]
 
