@@ -7,9 +7,15 @@ from utils.util import to_tensor
 
 
 class CustomDataset(Dataset):
+    _env_cache = {}
+
     def __init__(self, data_dir, mode='train'):
         super(CustomDataset, self).__init__()
-        self.db = lmdb.open(data_dir, readonly=True, lock=False, readahead=True, meminit=False)
+        if data_dir not in self._env_cache:
+            self._env_cache[data_dir] = lmdb.open(
+                data_dir, readonly=True, lock=False, readahead=True, meminit=False
+            )
+        self.db = self._env_cache[data_dir]
         with self.db.begin(write=False) as txn:
             self.keys = pickle.loads(txn.get('__keys__'.encode()))[mode]
 
