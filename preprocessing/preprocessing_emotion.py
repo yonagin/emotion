@@ -75,7 +75,7 @@ EEG_MINPREP_DEFAULTS = {
     "bad_ratio": 0.30,        # >30 % outliers → bad channel
     "eps": 1e-12,
     "ica_n_components": 0.99, # keep 99 % variance
-    "ica_method": "fastica",
+    "ica_method": "infomax",
     "ica_random_state": 97,
     "ica_fit_l": 1.0,         # higher HP for ICA stability
     "ica_fit_h": 47.0,
