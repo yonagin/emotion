@@ -44,7 +44,7 @@ def parse_args():
     parser.add_argument("--test_seg_pts", type=int, default=2500, help="Points per testing trial")
     parser.add_argument("--test_n_seg", type=int, default=8, help="Trials per public test mat")
     parser.add_argument("--sample_sec", type=int, default=5, help="Seconds per CBraMod sample")
-    parser.add_argument("--sample_stride_sec", type=int, default=2, help="Stride for train sliding windows")
+    parser.add_argument("--sample_stride_sec", type=int, default=3, help="Stride for train sliding windows")
     parser.add_argument("--val_ratio", type=float, default=0.1, help="Subject-level validation ratio")
     parser.add_argument("--test_ratio", type=float, default=0.05, help="Subject-level held-out test ratio")
     parser.add_argument("--seed", type=int, default=3407, help="Random seed for reproducible split")
@@ -77,6 +77,17 @@ def resample_segment(x: np.ndarray, src_fs: int, dst_fs: int) -> np.ndarray:
         return x.astype(np.float32)
     dst_points = int(round(x.shape[0] * dst_fs / src_fs))
     return signal.resample(x, dst_points, axis=0).astype(np.float32)
+
+
+def iter_sliding_windows(trial: np.ndarray, fs: int, sample_sec: int, stride_sec: int):
+    sample_points = fs * sample_sec
+    stride_points = fs * stride_sec
+    if stride_points <= 0:
+        raise ValueError(f"sample_stride_sec must be positive, got {stride_sec}")
+    if trial.shape[0] < sample_points:
+        return
+    for win_start in range(0, trial.shape[0] - sample_points + 1, stride_points):
+        yield win_start, trial[win_start:win_start + sample_points, :]
 
 
 def to_cbramod_sample(segment: np.ndarray, target_fs: int, sample_sec: int) -> np.ndarray:
@@ -114,8 +125,6 @@ def iter_train_samples(mat_path: Path, group: int, args):
         "EEG_data_neu": 0,
         "EEG_data_pos": 1,
     }
-    sample_points = args.fs * args.sample_sec
-    stride_points = args.fs * args.sample_stride_sec
 
     for var_name, label in emotion_map.items():
         data = load_mat_variable(mat_path, var_name)
@@ -126,8 +135,7 @@ def iter_train_samples(mat_path: Path, group: int, args):
             if trial.shape[0] != args.train_seg_pts:
                 continue
             window_id = 0
-            for win_start in range(0, args.train_seg_pts - sample_points + 1, stride_points):
-                chunk = trial[win_start:win_start + sample_points, :]
+            for _, chunk in iter_sliding_windows(trial, args.fs, args.sample_sec, args.sample_stride_sec):
                 chunk = resample_segment(chunk, args.fs, args.target_fs)
                 sample = to_cbramod_sample(chunk, args.target_fs, args.sample_sec)
                 key = f"{user_id}_{'dep' if group == 1 else 'hc'}_{var_name}_{seg_idx}_{window_id}"
@@ -140,6 +148,33 @@ def iter_train_samples(mat_path: Path, group: int, args):
                     "window_id": int(window_id),
                 }
                 window_id += 1
+
+
+def iter_public_test_samples(mat_path: Path, args):
+    user_id = mat_path.stem
+    try:
+        data = load_mat_variable(mat_path, "test_eeg_c")
+    except KeyError:
+        log.warning("skip %s because test_eeg_c is missing", mat_path)
+        return
+
+    for seg_idx in range(args.test_n_seg):
+        seg_start = seg_idx * args.test_seg_pts
+        seg_end = seg_start + args.test_seg_pts
+        segment = data[seg_start:seg_end, :]
+        if segment.shape[0] != args.test_seg_pts:
+            continue
+        window_id = 0
+        for _, chunk in iter_sliding_windows(segment, args.fs, args.sample_sec, args.sample_stride_sec):
+            chunk = resample_segment(chunk, args.fs, args.target_fs)
+            sample = to_cbramod_sample(chunk, args.target_fs, args.sample_sec)
+            yield sample, {
+                "subject_id": user_id,
+                "trial_id": seg_idx,
+                "window_id": window_id,
+                "sample_key": f"{user_id}_trial_{seg_idx}_{window_id}",
+            }
+            window_id += 1
 
 
 def write_lmdb(db, key, value):
@@ -197,28 +232,9 @@ def export_public_test_preview(args):
     sample_list = []
     meta_list = []
     for mat_path in sorted(test_dir.glob("*.mat")):
-        user_id = mat_path.stem
-        try:
-            data = load_mat_variable(mat_path, "test_eeg_c")
-        except KeyError:
-            log.warning("skip %s because test_eeg_c is missing", mat_path)
-            continue
-        for seg_idx in range(args.test_n_seg):
-            seg_start = seg_idx * args.test_seg_pts
-            seg_end = seg_start + args.test_seg_pts
-            segment = data[seg_start:seg_end, :]
-            if segment.shape[0] != args.test_seg_pts:
-                continue
-            segment = resample_segment(segment, args.fs, args.target_fs)
-            sample = to_cbramod_sample(segment, args.target_fs, args.sample_sec)
+        for sample, meta in iter_public_test_samples(mat_path, args):
             sample_list.append(sample)
-            meta_list.append(
-                {
-                    "subject_id": user_id,
-                    "trial_id": seg_idx,
-                    "sample_key": f"{user_id}_trial_{seg_idx}",
-                }
-            )
+            meta_list.append(meta)
 
     if sample_list:
         np.save(output_path, np.stack(sample_list).astype(np.float32))
