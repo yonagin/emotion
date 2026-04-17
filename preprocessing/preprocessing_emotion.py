@@ -67,7 +67,7 @@ EEG_MINPREP_DEFAULTS = {
     "enabled": True,
     # notch_freqs intentionally omitted:
     #   documentation confirms 50 Hz mains noise was removed at acquisition.
-    "bp_l": None,
+    "bp_l": 1.0,
     "bp_h": 47.0,
     "filter_method": "fir",   # zero-phase FIR (MNE default when phase="zero")
     "filter_phase": "zero",
