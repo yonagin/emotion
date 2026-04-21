@@ -28,7 +28,7 @@ class CustomDataset(Dataset):
             pair = pickle.loads(txn.get(key.encode()))
         data = pair['sample']
         label = pair['label']
-        return data / 100, label
+        return data, label
 
     def collate(self, batch):
         x_data = np.array([x[0] for x in batch])

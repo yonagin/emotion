@@ -63,24 +63,28 @@ log = logging.getLogger(__name__)
 #   * Preprocessing is now applied per-trial, not per-recording, to avoid
 #     cross-trial edge artifacts at segment boundaries.
 # ---------------------------------------------------------------------------
+
 EEG_MINPREP_DEFAULTS = {
     "enabled": True,
-    # notch_freqs intentionally omitted:
-    #   documentation confirms 50 Hz mains noise was removed at acquisition.
-    "bp_l": 1.0,
+    "bp_l": 0.05,
     "bp_h": 47.0,
-    "filter_method": "fir",   # zero-phase FIR (MNE default when phase="zero")
+    "filter_method": "iir",
     "filter_phase": "zero",
     "mad_k": 3.0,
-    "bad_ratio": 0.30,        # >30 % outliers → bad channel
+    "bad_ratio": 0.30,
     "eps": 1e-12,
-    "ica_n_components": 0.99, # keep 99 % variance
+    "ica_n_components": 0.99,
     "ica_method": "infomax",
     "ica_random_state": 97,
-    "ica_fit_l": 1.0,         # higher HP for ICA stability
+    "ica_fit_l": 0.05,
     "ica_fit_h": 47.0,
     "ica_eog_threshold": 3.0,
+    
+    # --- 新增 Z-score 与 Clip 配置 ---
+    "apply_zscore": True, 
+    "clip_val": 10.0,         # Z-score 截断范围为 [-10.0, 10.0]
 }
+
 
 # ---------------------------------------------------------------------------
 # Channel metadata
@@ -289,15 +293,36 @@ def preprocess_trial(trial_samp_ch: np.ndarray, fs: int, cfg: dict | None = None
             raw.info["bads"] = []
 
     # --- ICA (EOG artefact removal) ---
-    try:
-        raw = run_ica_eog(raw, cfg)
-        log.info("   ICA(EOG) applied.")
-    except Exception as exc:
-        log.warning("   ICA failed: %r – continuing without.", exc)
+    raw = run_ica_eog(raw, cfg)
+    
+    # 获取清理后的数据: (n_channels, n_times).T → (n_times, n_channels)
+    cleaned_data = raw.get_data(picks="eeg").T.astype(np.float32)
+
+    # ==========================================================
+    # 🌟 新增：基于单个 Trial 和 Channel 的 Z-score 与 Clip
+    # ==========================================================
+    if cfg.get("apply_zscore", True):
+        # 计算当前 trial 的均值和标准差，沿着时间轴 (axis=0) 计算
+        # mean 和 std 的形状均为 (n_channels,)
+        mean = np.mean(cleaned_data, axis=0)
+        std = np.std(cleaned_data, axis=0)
+        
+        # 防止方差为 0 导致除以 0 的错误 (死通道)
+        std = np.where(std == 0, 1e-9, std)
+        
+        stats = np.stack([mean, std], axis=0)
+        
+        # 执行 Z-score 归一化 (利用 NumPy 广播机制)
+        # cleaned_data: (n_times, n_channels) - stats[0]: (n_channels,)
+        cleaned_data = (cleaned_data - stats[0]) / stats[1]
+        
+        # 执行 Clip 截断
+        clip_val = cfg.get("clip_val", 10.0)
+        if clip_val is not None and clip_val > 0:
+            cleaned_data = np.clip(cleaned_data, -clip_val, clip_val)        
 
     # (n_channels, n_times).T → (n_times, n_channels)
-    return raw.get_data(picks="eeg").T.astype(np.float32)
-
+    return cleaned_data.astype(np.float32)
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -399,9 +424,9 @@ def to_cbramod_sample(segment: np.ndarray, target_fs: int, sample_sec: int) -> n
 # Subject-level train/val/test split (deterministic)
 # ---------------------------------------------------------------------------
 
-def stable_subject_split(subject_ids, val_ratio, test_ratio, seed):
+def stable_subject_split(user_ids, val_ratio, test_ratio, seed):
     ordered = sorted(
-        subject_ids,
+        user_ids,
         key=lambda sid: hashlib.md5(f"{seed}:{sid}".encode()).hexdigest(),
     )
     n = len(ordered)
@@ -468,7 +493,7 @@ def iter_train_samples(mat_path: Path, group: int, args):
                 yield key, {
                     "sample":     sample,
                     "label":      float(label),
-                    "subject_id": user_id,
+                    "user_id": user_id,
                     "group":      int(group),
                     "trial_id":   int(seg_idx),
                     "window_id":  int(window_id),
@@ -516,7 +541,7 @@ def iter_public_test_samples(mat_path: Path, args):
             chunk  = resample_segment(chunk, args.fs, args.target_fs)
             sample = to_cbramod_sample(chunk, args.target_fs, args.sample_sec)
             yield sample, {
-                "subject_id": user_id,
+                "user_id": user_id,
                 "trial_id":   seg_idx,
                 "window_id":  window_id,
                 "sample_key": f"{user_id}_trial_{seg_idx}_{window_id}",
@@ -546,7 +571,7 @@ def build_train_lmdb(args) -> None:
             log.info("Processing %s", mat_path)
             for key, record in iter_train_samples(mat_path, group_label, args):
                 write_lmdb(db, key, record)
-                subject_entries.setdefault(record["subject_id"], []).append(key)
+                subject_entries.setdefault(record["user_id"], []).append(key)
 
     train_subj, val_subj, test_subj = stable_subject_split(
         subject_entries.keys(), args.val_ratio, args.test_ratio, args.seed
