@@ -33,7 +33,7 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--input",
+        "--input_dir",
         type=str,
         required=True,
         help="Folder containing public_test_samples.npy and public_test_manifest.pkl",
