@@ -127,6 +127,8 @@ def run_inference(model, data_loader, device):
             logits = model(batch)
             probs = torch.softmax(logits, dim=1)
             all_probs.append(probs.cpu().numpy())
+    if not all_probs:
+        return np.empty((0, 2), dtype=np.float32)
     return np.concatenate(all_probs, axis=0)
 
 
@@ -151,10 +153,39 @@ def aggregate_trial_predictions(probabilities, manifest, trial_id_offset):
             {
                 "user_id": user_id,
                 "trial_id": trial_id,
+                "neutral_prob": float(mean_prob[0]),
+                "positive_prob": float(mean_prob[1]),
                 "Emotion_label": pred_label,
             }
         )
     return rows
+
+
+def summarize_manifest(manifest):
+    trial_counts = defaultdict(set)
+    window_counts = defaultdict(int)
+
+    for meta in manifest:
+        user_id = meta["user_id"]
+        trial_id = int(meta["trial_id"])
+        trial_counts[user_id].add(trial_id)
+        window_counts[(user_id, trial_id)] += 1
+
+    unique_users = sorted(trial_counts.keys())
+    unique_trials = sorted({trial_id for trials in trial_counts.values() for trial_id in trials})
+    windows_per_trial = sorted(set(window_counts.values()))
+
+    print(f"[INFO] manifest samples: {len(manifest)}")
+    print(f"[INFO] unique users: {len(unique_users)} -> {unique_users}")
+    print(f"[INFO] unique trial ids: {len(unique_trials)} -> {[trial_id + 1 for trial_id in unique_trials]}")
+    print(f"[INFO] trials per user: {sorted((user_id, len(trials)) for user_id, trials in trial_counts.items())}")
+    print(f"[INFO] windows per trial: {windows_per_trial}")
+
+    return {
+        "n_users": len(unique_users),
+        "n_trials": len(unique_trials),
+        "windows_per_trial": windows_per_trial,
+    }
 
 
 def main():
@@ -173,6 +204,17 @@ def main():
 
     args.chans = int(dataset.samples.shape[1])
     args.samples = int(dataset.samples.shape[2] * dataset.samples.shape[3])
+    manifest_summary = summarize_manifest(manifest)
+
+    print(f"[INFO] raw npy shape: {np.load(str(npy_path), mmap_mode='r').shape}")
+    print(f"[INFO] mapped npy shape: {dataset.samples.shape}")
+    print(f"[INFO] model input chans: {args.chans}")
+    print(f"[INFO] model input samples: {args.samples}")
+
+    if manifest_summary["n_users"] != 10:
+        print(f"[WARN] expected 10 users, got {manifest_summary['n_users']}")
+    if manifest_summary["n_trials"] != 8:
+        print(f"[WARN] expected 8 trial ids, got {manifest_summary['n_trials']}")
 
     data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
 
@@ -181,9 +223,13 @@ def main():
     model.load_state_dict(state_dict)
 
     probabilities = run_inference(model, data_loader, device)
+    print(f"[INFO] probability array shape: {probabilities.shape}")
     rows = aggregate_trial_predictions(probabilities, manifest, args.trial_id_offset)
 
-    df = pd.DataFrame(rows, columns=["user_id", "trial_id", "Emotion_label"])
+    df = pd.DataFrame(
+        rows,
+        columns=["user_id", "trial_id", "neutral_prob", "positive_prob", "Emotion_label"],
+    )
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_excel(output_path, index=False)
