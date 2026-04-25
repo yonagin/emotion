@@ -32,12 +32,11 @@ def parse_args():
         description="Run DSAINet inference on public test npy and export Excel."
     )
 
-    parser.add_argument("--input", type=str, required=True, help="Path to public_test_samples.npy")
     parser.add_argument(
-        "--manifest_pkl",
+        "--input_dir",
         type=str,
         required=True,
-        help="Path to public_test_manifest.pkl generated together with the npy",
+        help="Folder containing public_test_samples.npy and public_test_manifest.pkl",
     )
     parser.add_argument("--model_path", type=str, required=True, help="Path to trained .pth model")
     parser.add_argument("--output", type=str, required=True, help="Path to output .xlsx file")
@@ -86,6 +85,24 @@ def load_manifest(manifest_pkl: str):
     return manifest
 
 
+def resolve_input_paths(input_dir: str):
+    input_root = Path(input_dir)
+    if not input_root.exists():
+        raise FileNotFoundError(f"Input folder does not exist: {input_root}")
+    if not input_root.is_dir():
+        raise NotADirectoryError(f"Input path is not a folder: {input_root}")
+
+    npy_path = input_root / "public_test_samples.npy"
+    manifest_path = input_root / "public_test_manifest.pkl"
+
+    if not npy_path.exists():
+        raise FileNotFoundError(f"Missing file: {npy_path}")
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Missing file: {manifest_path}")
+
+    return npy_path, manifest_path
+
+
 def run_inference(model, data_loader, device):
     model.eval()
     all_probs = []
@@ -130,9 +147,10 @@ def main():
     setup_seed(args.seed)
 
     device = torch.device(args.device if torch.cuda.is_available() or str(args.device) == "cpu" else "cpu")
+    npy_path, manifest_path = resolve_input_paths(args.input_dir)
 
-    dataset = NpyDataset(args.input)
-    manifest = load_manifest(args.manifest_pkl)
+    dataset = NpyDataset(str(npy_path))
+    manifest = load_manifest(str(manifest_path))
     if len(dataset) != len(manifest):
         raise ValueError(
             f"Sample count in npy ({len(dataset)}) does not match manifest count ({len(manifest)})"
