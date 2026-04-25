@@ -105,9 +105,6 @@ class TrainerDSAINet(object):
             )
 
         self.data_length = len(self.data_loader["train"])
-        self.optimizer_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer, T_max=self.params.epochs * self.data_length, eta_min=1e-6
-        )
         print(self.model)
 
     def train(self):
@@ -135,7 +132,6 @@ class TrainerDSAINet(object):
                 if self.params.clip_value > 0:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.params.clip_value)
                 self.optimizer.step()
-                self.optimizer_scheduler.step()
 
             optim_state = self.optimizer.state_dict()
 

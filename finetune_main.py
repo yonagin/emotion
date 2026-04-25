@@ -9,7 +9,7 @@ from datasets import faced_dataset, seedv_dataset, physio_dataset, shu_dataset, 
 from finetune_trainer import Trainer
 from models import model_for_faced, model_for_seedv, model_for_physio, model_for_shu, model_for_isruc, model_for_chb, \
     model_for_speech, model_for_mumtaz, model_for_seedvig, model_for_stress, model_for_tuev, model_for_tuab, \
-    model_for_bciciv2a, model_for_emotion
+    model_for_bciciv2a
 
 
 def str2bool(v):
@@ -152,12 +152,6 @@ def main():
         model = model_for_bciciv2a.Model(params)
         t = Trainer(params, data_loader, model)
         t.train_for_multiclass()
-    elif params.downstream_dataset == 'Emotion':
-        load_dataset = faced_dataset.LoadDataset(params)
-        data_loader = load_dataset.get_data_loader()
-        model = model_for_emotion.Model(params)
-        t = Trainer(params, data_loader, model)
-        t.train_for_binaryclass()
     print('Done!!!!!')
 
 
