@@ -29,12 +29,12 @@ class Model(nn.Module):
         elif param.classifier == 'all_patch_reps_onelayer':
             self.classifier = nn.Sequential(
                 Rearrange('b c s d -> b (c s d)'),
-                nn.Linear(32 * 10 * 200, param.num_of_classes),
+                nn.LazyLinear(param.num_of_classes),
             )
         elif param.classifier == 'all_patch_reps_twolayer':
             self.classifier = nn.Sequential(
                 Rearrange('b c s d -> b (c s d)'),
-                nn.Linear(32 * 10 * 200, 200),
+                nn.LazyLinear(10 * 200),
                 nn.ELU(),
                 nn.Dropout(param.dropout),
                 nn.Linear(200, param.num_of_classes),
@@ -42,7 +42,7 @@ class Model(nn.Module):
         elif param.classifier == 'all_patch_reps':
             self.classifier = nn.Sequential(
                 Rearrange('b c s d -> b (c s d)'),
-                nn.Linear(32 * 10 * 200, 10 * 200),
+                nn.LazyLinear(10 * 200),
                 nn.ELU(),
                 nn.Dropout(param.dropout),
                 nn.Linear(10 * 200, 200),
