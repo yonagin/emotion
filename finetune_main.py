@@ -154,7 +154,7 @@ def main():
         t = Trainer(params, data_loader, model)
         t.train_for_multiclass()
     elif params.downstream_dataset == 'Emotion':
-        load_dataset = emotion_dataset.LoadDataset(params)
+        load_dataset = faced_dataset.LoadDataset(params)
         data_loader = load_dataset.get_data_loader()
         model = model_for_emotion.Model(params)
         t = Trainer(params, data_loader, model)

@@ -68,7 +68,7 @@ EEG_MINPREP_DEFAULTS = {
     "enabled": True,
     "bp_l": 0.05,
     "bp_h": 47.0,
-    "filter_method": "iir",
+    "filter_method": "fir",
     "filter_phase": "zero",
     "mad_k": 3.0,
     "bad_ratio": 0.30,
@@ -294,13 +294,8 @@ def preprocess_trial(trial_samp_ch: np.ndarray, fs: int, cfg: dict | None = None
 
     # --- ICA (EOG artefact removal) ---
     raw = run_ica_eog(raw, cfg)
-    
-    # 获取清理后的数据: (n_channels, n_times).T → (n_times, n_channels)
     cleaned_data = raw.get_data(picks="eeg").T.astype(np.float32)
 
-    # ==========================================================
-    # 🌟 新增：基于单个 Trial 和 Channel 的 Z-score 与 Clip
-    # ==========================================================
     if cfg.get("apply_zscore", True):
         # 计算当前 trial 的均值和标准差，沿着时间轴 (axis=0) 计算
         # mean 和 std 的形状均为 (n_channels,)
