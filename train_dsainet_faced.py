@@ -68,7 +68,7 @@ class DSAINetAdapter(nn.Module):
             inter_ffn_expansion=params.inter_ffn_expansion,
             big_residual=params.big_residual,
             big_residual_learnable=params.big_residual_learnable,
-            cls_dropout=params.cls_dropout,
+            cls_dropout=params.dropout,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -238,7 +238,7 @@ def parse_args():
 
     parser.add_argument("--big_residual", type=str2bool, default=True)
     parser.add_argument("--big_residual_learnable", type=str2bool, default=True)
-    parser.add_argument("--cls_dropout", type=float, default=0.25)
+    parser.add_argument("--dropout", type=float, default=0.25)
 
     return parser.parse_args()
 
