@@ -52,7 +52,11 @@ def parse_args():
     )
 
     parser.add_argument("--num_of_classes", type=int, default=2)
-     # DSAINet hparams (defaults match models/DSAINet.py)
+    # FACED to DSAINet shape
+    parser.add_argument("--chans", type=int, default=17, help="number of channels")
+    parser.add_argument("--samples", type=int, default=2000, help="time length after reshape (10*200=2000)")
+
+    # DSAINet hparams (defaults match models/DSAINet.py)
     parser.add_argument("--emb_size", type=int, default=40)
     parser.add_argument("--heads", type=int, default=4)
     parser.add_argument("--attn_depth", type=int, default=1)
