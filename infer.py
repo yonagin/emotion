@@ -10,6 +10,8 @@ from torch.utils.data import DataLoader, Dataset
 
 from train_dsainet_faced import DSAINetAdapter, setup_seed, str2bool
 
+CHANNEL_MAPPING = [0, 1, 2, 3, 4, 5, 6, 12, 13, 14, 15, 16, 22, 23, 24, 25, 26]
+
 
 class NpyDataset(Dataset):
     def __init__(self, npy_path: str):
@@ -18,6 +20,13 @@ class NpyDataset(Dataset):
             raise ValueError(
                 f"Expected npy shape (N, C, S, P), but got {self.samples.shape}"
             )
+        max_channel = max(CHANNEL_MAPPING)
+        if self.samples.shape[1] <= max_channel:
+            raise ValueError(
+                f"Input npy only has {self.samples.shape[1]} channels, "
+                f"but channel mapping requires index {max_channel}"
+            )
+        self.samples = self.samples[:, CHANNEL_MAPPING, :, :]
 
     def __len__(self):
         return int(self.samples.shape[0])
@@ -52,8 +61,7 @@ def parse_args():
     )
 
     parser.add_argument("--num_of_classes", type=int, default=2)
-    # FACED to DSAINet shape
-    parser.add_argument("--chans", type=int, default=17, help="number of channels")
+    parser.add_argument("--chans", type=int, default=len(CHANNEL_MAPPING), help="number of channels after mapping")
     parser.add_argument("--samples", type=int, default=2000, help="time length after reshape (10*200=2000)")
 
     # DSAINet hparams (defaults match models/DSAINet.py)
@@ -162,6 +170,9 @@ def main():
         raise ValueError(
             f"Sample count in npy ({len(dataset)}) does not match manifest count ({len(manifest)})"
         )
+
+    args.chans = int(dataset.samples.shape[1])
+    args.samples = int(dataset.samples.shape[2] * dataset.samples.shape[3])
 
     data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
 
