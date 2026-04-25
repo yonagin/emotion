@@ -282,11 +282,17 @@ class GNN(nn.Module):
             in_dim=node_hidden, out_dim=gcn_hidden, heads=heads,
             dropout=dropout, share_weights=True
         )
+        self.gat2 = GATv2Layer(
+            in_dim=gcn_hidden, out_dim=gcn_hidden, heads=heads,
+            dropout=dropout, share_weights=True
+        )
 
         self.ln1 = nn.LayerNorm(gcn_hidden)
+        self.ln2 = nn.LayerNorm(gcn_hidden)
         self.drop = nn.Dropout(dropout)
 
         self.skip1 = nn.Linear(node_hidden, gcn_hidden, bias=False) if node_hidden != gcn_hidden else nn.Identity()
+        self.skip2 = nn.Identity()
 
         self.pool = AttentionPooling(gcn_hidden)
         self.emotion_head = nn.Linear(gcn_hidden, n_classes)
@@ -315,7 +321,11 @@ class GNN(nn.Module):
         h1 = self.drop(F.gelu(self.ln1(h1)))
         h1 = h1 + self.skip1(h)
 
-        return self.pool(h1)                        # (B, gcn_hidden)
+        h2 = self.gat2(h1, A)
+        h2 = self.drop(F.gelu(self.ln2(h2)))
+        h2 = h2 + self.skip2(h1)
+
+        return self.pool(h2)                        # (B, gcn_hidden)
 
     def forward(self, x: torch.Tensor):
         feat = self.extract_features(x)
