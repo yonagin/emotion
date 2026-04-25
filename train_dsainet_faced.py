@@ -212,7 +212,7 @@ def parse_args():
     parser.add_argument("--model_dir", type=str, default="runs/dsainet_faced", help="output dir to save weights")
 
     # FACED to DSAINet shape
-    parser.add_argument("--chans", type=int, default=32, help="number of channels (FACED=32)")
+    parser.add_argument("--chans", type=int, default=17, help="number of channels")
     parser.add_argument("--samples", type=int, default=2000, help="time length after reshape (10*200=2000)")
 
     # DSAINet hparams (defaults match models/DSAINet.py)
