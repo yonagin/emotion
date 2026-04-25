@@ -52,24 +52,27 @@ def parse_args():
     )
 
     parser.add_argument("--num_of_classes", type=int, default=2)
-    parser.add_argument("--chans", type=int, default=17)
-    parser.add_argument("--samples", type=int, default=2000)
+     # DSAINet hparams (defaults match models/DSAINet.py)
     parser.add_argument("--emb_size", type=int, default=40)
     parser.add_argument("--heads", type=int, default=4)
     parser.add_argument("--attn_depth", type=int, default=1)
     parser.add_argument("--attn_dropout", type=float, default=0.25)
+
     parser.add_argument("--eeg1_f1", type=int, default=16)
     parser.add_argument("--eeg1_kernel_size", type=int, default=64)
     parser.add_argument("--eeg1_D", type=int, default=2)
     parser.add_argument("--eeg1_pooling_size1", type=int, default=4)
     parser.add_argument("--eeg1_pooling_size2", type=int, default=8)
     parser.add_argument("--eeg1_dropout_rate", type=float, default=0.25)
-    parser.add_argument("--branch_1_kernels", type=int, nargs="*", default=[11, 15])
-    parser.add_argument("--branch_2_kernels", type=int, nargs="*", default=[3, 7])
+
+    parser.add_argument("--branch_1_kernels", type=int, nargs="*", default=[11, 15], help="ConvTime kernels for branch 1")
+    parser.add_argument("--branch_2_kernels", type=int, nargs="*", default=[3, 7], help="ConvTime kernels for branch 2")
     parser.add_argument("--conv_expansion", type=int, default=4)
     parser.add_argument("--conv_dropout", type=float, default=0.25)
+
     parser.add_argument("--intra_ffn_expansion", type=int, default=2)
     parser.add_argument("--inter_ffn_expansion", type=int, default=2)
+
     parser.add_argument("--big_residual", type=str2bool, default=True)
     parser.add_argument("--big_residual_learnable", type=str2bool, default=True)
     parser.add_argument("--dropout", type=float, default=0.25)
