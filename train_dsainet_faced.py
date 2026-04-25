@@ -208,7 +208,7 @@ def parse_args():
 
     # dataset
     parser.add_argument("--datasets_dir", type=str, default="/data/datasets/BigDownstream/Faced/processed", help="LMDB dir")
-    parser.add_argument("--num_of_classes", type=int, default=9, help="number of classes for FACED (0-8)")
+    parser.add_argument("--num_of_classes", type=int, default=2, help="number of classes for FACED (0-8)")
     parser.add_argument("--model_dir", type=str, default="runs/dsainet_faced", help="output dir to save weights")
 
     # FACED to DSAINet shape
