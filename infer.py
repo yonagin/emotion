@@ -2,6 +2,7 @@ import argparse
 from collections import defaultdict
 from pathlib import Path
 import pickle
+import re
 
 import numpy as np
 import pandas as pd
@@ -146,19 +147,25 @@ def aggregate_trial_predictions(probabilities, manifest, trial_id_offset):
         grouped[(user_id, trial_id)].append(prob)
 
     rows = []
-    for (user_id, trial_id) in sorted(grouped.keys(), key=lambda item: (item[0], item[1])):
+    for (user_id, trial_id) in sorted(grouped.keys(), key=lambda item: (natural_user_key(item[0]), item[1])):
         mean_prob = np.mean(np.stack(grouped[(user_id, trial_id)], axis=0), axis=0)
         pred_label = int(np.argmax(mean_prob))
         rows.append(
             {
                 "user_id": user_id,
                 "trial_id": trial_id,
-                "neutral_prob": float(mean_prob[0]),
-                "positive_prob": float(mean_prob[1]),
                 "Emotion_label": pred_label,
             }
         )
     return rows
+
+
+def natural_user_key(user_id: str):
+    match = re.match(r"^(.*?)(\d+)$", user_id)
+    if match:
+        prefix, number = match.groups()
+        return prefix, int(number)
+    return user_id, -1
 
 
 def summarize_manifest(manifest):
@@ -171,14 +178,17 @@ def summarize_manifest(manifest):
         trial_counts[user_id].add(trial_id)
         window_counts[(user_id, trial_id)] += 1
 
-    unique_users = sorted(trial_counts.keys())
+    unique_users = sorted(trial_counts.keys(), key=natural_user_key)
     unique_trials = sorted({trial_id for trials in trial_counts.values() for trial_id in trials})
     windows_per_trial = sorted(set(window_counts.values()))
 
     print(f"[INFO] manifest samples: {len(manifest)}")
     print(f"[INFO] unique users: {len(unique_users)} -> {unique_users}")
     print(f"[INFO] unique trial ids: {len(unique_trials)} -> {[trial_id + 1 for trial_id in unique_trials]}")
-    print(f"[INFO] trials per user: {sorted((user_id, len(trials)) for user_id, trials in trial_counts.items())}")
+    print(
+        f"[INFO] trials per user: "
+        f"{sorted(((user_id, len(trials)) for user_id, trials in trial_counts.items()), key=lambda item: natural_user_key(item[0]))}"
+    )
     print(f"[INFO] windows per trial: {windows_per_trial}")
 
     return {
@@ -226,10 +236,7 @@ def main():
     print(f"[INFO] probability array shape: {probabilities.shape}")
     rows = aggregate_trial_predictions(probabilities, manifest, args.trial_id_offset)
 
-    df = pd.DataFrame(
-        rows,
-        columns=["user_id", "trial_id", "neutral_prob", "positive_prob", "Emotion_label"],
-    )
+    df = pd.DataFrame(rows, columns=["user_id", "trial_id", "Emotion_label"])
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_excel(output_path, index=False)
