@@ -81,9 +81,9 @@ class Trainer(object):
                 y = y.cuda()
                 pred = self.model(x)
                 if self.params.downstream_dataset == 'ISRUC':
-                    loss = self.criterion(pred.transpose(1, 2), y)
+                    loss = self.criterion(pred.transpose(1, 2), y.long())
                 else:
-                    loss = self.criterion(pred, y)
+                    loss = self.criterion(pred, y.long())
 
                 loss.backward()
                 losses.append(loss.data.cpu().numpy())
